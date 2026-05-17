@@ -1,8 +1,17 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.routers import diagnose, health
+
+# Make sure app loggers (e.g. app.services.gemini) actually emit to stdout
+# alongside uvicorn's access log.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 settings = get_settings()
 

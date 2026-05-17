@@ -1,6 +1,7 @@
 """Gemini multimodal client — single-call image diagnosis."""
 
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +11,8 @@ from google.genai import types
 
 from app.core.config import get_settings
 from app.schemas.diagnose import DiagnosisResponse, Safety, Trust
+
+logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "diagnose_system.md"
 _SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
@@ -46,17 +49,30 @@ async def diagnose_image(image_bytes: bytes, mime: str, hint: str | None) -> Dia
         )
     ]
 
-    response = _client().models.generate_content(
-        model=settings.gemini_model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            temperature=0.3,
-        ),
+    logger.info(
+        "Gemini call: model=%s, image_bytes=%d, hint=%r",
+        settings.gemini_model,
+        len(image_bytes),
+        hint,
     )
 
+    try:
+        response = _client().models.generate_content(
+            model=settings.gemini_model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                temperature=0.3,
+            ),
+        )
+    except Exception:
+        logger.exception("Gemini generate_content raised")
+        raise
+
     raw = (response.text or "").strip()
+    logger.info("Gemini raw response (len=%d): %s", len(raw), raw[:300])
+
     try:
         data: dict = json.loads(raw)
     except json.JSONDecodeError as e:
