@@ -37,67 +37,66 @@ curl -X POST http://127.0.0.1:8000/api/v1/diagnose \
 
 ---
 
-## 서버 배포 (Ubuntu + Docker + Cloudflare Tunnel)
+## 서버 배포 (Ubuntu + Docker, 외부 노출 X)
+
+**아키텍처**: 백엔드는 인터넷에 직접 노출되지 않습니다. molu-mvp(프론트)와 같은
+docker 네트워크 `molu-net`에 들어가고, Next.js가 서버 사이드에서 `/api/v1/*` 요청을
+컨테이너 이름(`http://molu-api:8000`)으로 프록시합니다. Cloudflare Tunnel은
+**프론트(`molu.likelionscnu.site`)에만** 연결되어 있으면 됩니다.
 
 ### 1) Gemini API 키 발급 (5분, 무료)
 
 1. https://aistudio.google.com 접속 → Google 로그인
 2. 좌측 상단 **Get API key** → **Create API key** → **Create API key in new project**
-3. 생성된 키 복사 (한 번만 보임. 분실 시 재발급 필요)
+3. 생성된 `AIza...` 키 복사 (한 번만 보임)
 
-### 2) 코드 가져오기
+### 2) 공유 docker 네트워크 만들기 (처음 한 번만)
+
+```bash
+docker network create molu-net 2>/dev/null || echo "이미 있음"
+```
+
+### 3) 백엔드 가져오기 + 설정 + 기동
 
 ```bash
 cd ~/apps
 git clone https://github.com/Hbin77/molu-api.git
 cd molu-api
-```
-
-### 3) .env 만들기 (API 키 주입)
-
-```bash
 cp .env.example .env
-nano .env       # GEMINI_API_KEY=AIza... 채우기
-# HOST_PORT=8000이 이미 쓰이면 다른 포트로 (예: 8200)
-```
+nano .env       # GEMINI_API_KEY=AIza... 채우기. HOST_PORT는 더 이상 안 씀
 
-### 4) 빌드 + 실행
-
-```bash
 docker compose up -d --build
-docker compose ps                    # healthy 확인
-curl -sf http://127.0.0.1:8000/health  # {"status":"ok"}
+docker compose ps                       # healthy 확인
+docker compose logs --tail=20 api       # 시작 로그
 ```
 
-### 5) Cloudflare Tunnel에 서브도메인 추가
+호스트 포트가 안 열린 게 정상입니다 (`docker compose ps` STATUS에 PORTS 컬럼 비어있음).
+컨테이너끼리는 `http://molu-api:8000`으로만 닿습니다.
 
-대시보드 https://one.dash.cloudflare.com → Networks → Tunnels → **Ubuntu-server** → **호스트 이름 경로** 탭 → **+ 호스트 이름 추가**:
+### 4) 프론트 재기동 (`molu-net`에 합류시키기)
 
-| 필드 | 값 |
-|---|---|
-| Subdomain | `api.molu` |
-| Domain | `likelionscnu.site` |
-| Type | `HTTP` |
-| URL | `localhost:8000` (또는 HOST_PORT 바꿨으면 그 포트) |
-
-저장하면 https://api.molu.likelionscnu.site/health 에 즉시 접근 가능.
-
-### 6) 프론트가 사용하는 환경변수
-
-`molu-mvp/.env` 에 다음 한 줄 추가 후 재빌드:
-
-```
-NEXT_PUBLIC_API_BASE=https://api.molu.likelionscnu.site
-```
+프론트 docker-compose도 같은 외부 네트워크를 사용하도록 이미 설정돼 있습니다.
+서버에서 프론트 컨테이너를 재기동만 하면 됩니다:
 
 ```bash
 cd ~/apps/molu-mvp
 git pull
-nano .env       # NEXT_PUBLIC_API_BASE 줄 추가
 docker compose up -d --build
 ```
 
-이제 https://molu.likelionscnu.site 의 데모 섹션이 진짜로 동작합니다.
+### 5) 검증
+
+```bash
+# 같은 네트워크의 컨테이너 안에서는 닿음 (외부에선 X)
+docker exec molu-mvp wget -qO- http://molu-api:8000/health
+# {"status":"ok"}
+
+# 그리고 브라우저에서 https://molu.likelionscnu.site 데모로 사진 업로드
+# Next.js가 자동으로 /api/v1/diagnose → http://molu-api:8000/api/v1/diagnose 프록시
+```
+
+호스트에서 직접 `curl http://127.0.0.1:8000/health` 같은 건 더 이상 작동하지 않습니다
+(의도된 결과 — 외부 노출 안 함). 디버깅이 필요하면 `docker compose logs api` 사용.
 
 ---
 
