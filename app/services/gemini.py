@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 from google import genai
@@ -18,7 +19,13 @@ PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "diagnose_system.md"
 _SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 
 
+@lru_cache(maxsize=1)
 def _client() -> genai.Client:
+    """Single shared Client across requests.
+
+    Re-creating per request causes httpx 'client has been closed' errors
+    when previous instances get GC'd between calls in the async runtime.
+    """
     return genai.Client(api_key=get_settings().gemini_api_key)
 
 
@@ -57,7 +64,9 @@ async def diagnose_image(image_bytes: bytes, mime: str, hint: str | None) -> Dia
     )
 
     try:
-        response = _client().models.generate_content(
+        # Use async surface inside our async handler so we don't block the
+        # event loop and don't trip httpx sync/async client state.
+        response = await _client().aio.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=types.GenerateContentConfig(
